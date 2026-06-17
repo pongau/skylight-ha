@@ -5,7 +5,11 @@ from __future__ import annotations
 from datetime import date, datetime, timedelta
 from typing import Any
 
-from homeassistant.components.calendar import CalendarEntity, CalendarEvent
+from homeassistant.components.calendar import (
+    CalendarEntity,
+    CalendarEntityFeature,
+    CalendarEvent,
+)
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.util import dt as dt_util
@@ -28,6 +32,11 @@ class SkylightCalendar(SkylightEntity, CalendarEntity):
     """Exposes the Skylight frame's calendar events."""
 
     _attr_name = "Calendar"
+    _attr_supported_features = (
+        CalendarEntityFeature.CREATE_EVENT
+        | CalendarEntityFeature.DELETE_EVENT
+        | CalendarEntityFeature.UPDATE_EVENT
+    )
 
     def __init__(self, coordinator: SkylightCoordinator) -> None:
         super().__init__(coordinator)
@@ -70,9 +79,67 @@ class SkylightCalendar(SkylightEntity, CalendarEntity):
         for item in self.coordinator.data.get("events", []):
             yield _to_event(item)
 
+    # -- writes ---------------------------------------------------------------
+    async def async_create_event(self, **kwargs: Any) -> None:
+        """Create an event from Home Assistant."""
+        attributes = _event_kwargs_to_attributes(kwargs)
+        await self.coordinator.client.async_create_calendar_event(attributes)
+        await self.coordinator.async_request_refresh()
+
+    async def async_delete_event(
+        self,
+        uid: str,
+        recurrence_id: str | None = None,
+        recurrence_range: str | None = None,
+    ) -> None:
+        """Delete an event by its Skylight id."""
+        await self.coordinator.client.async_delete_calendar_event(uid)
+        await self.coordinator.async_request_refresh()
+
+    async def async_update_event(
+        self,
+        uid: str,
+        event: dict[str, Any],
+        recurrence_id: str | None = None,
+        recurrence_range: str | None = None,
+    ) -> None:
+        """Update an existing event."""
+        attributes = _event_kwargs_to_attributes(event)
+        await self.coordinator.client.async_update_calendar_event(uid, attributes)
+        await self.coordinator.async_request_refresh()
+
 
 def _attrs(item: dict[str, Any]) -> dict[str, Any]:
     return item.get("attributes", {}) if isinstance(item, dict) else {}
+
+
+def _event_kwargs_to_attributes(kwargs: dict[str, Any]) -> dict[str, Any]:
+    """Map Home Assistant calendar create/update kwargs to a flat Skylight body."""
+    dtstart = kwargs.get("dtstart")
+    dtend = kwargs.get("dtend")
+    all_day = dtstart is not None and not isinstance(dtstart, datetime)
+
+    attributes: dict[str, Any] = {
+        "summary": kwargs.get("summary"),
+        "all_day": all_day,
+        "description": kwargs.get("description"),
+        "location": kwargs.get("location"),
+        "rrule": kwargs.get("rrule"),
+    }
+    if dtstart is not None:
+        attributes["starts_at"] = dtstart.isoformat()
+    if dtend is not None:
+        attributes["ends_at"] = dtend.isoformat()
+    if all_day:
+        attributes["timezone"] = None
+    else:
+        tz = None
+        if isinstance(dtstart, datetime) and dtstart.tzinfo is not None:
+            tz = getattr(dtstart.tzinfo, "key", None)
+        attributes["timezone"] = tz or str(dt_util.get_default_time_zone())
+
+    # drop keys HA didn't provide so we don't overwrite with null on update
+    return {k: v for k, v in attributes.items() if v is not None or k == "timezone"}
 
 
 def _to_event(item: dict[str, Any]) -> CalendarEvent | None:
@@ -100,7 +167,9 @@ def _to_event(item: dict[str, Any]) -> CalendarEvent | None:
         summary=a.get("summary") or "(no title)",
         description=a.get("description"),
         location=a.get("location"),
-        uid=a.get("uid") or str(item.get("id")),
+        # Use the Skylight resource id as the UID so HA delete/update target
+        # the right record via /calendar_events/{id}.
+        uid=str(item.get("id")),
         recurrence_id=a.get("master_event_id"),
         rrule=a.get("rrule"),
     )

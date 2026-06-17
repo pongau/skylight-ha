@@ -304,20 +304,23 @@ class SkylightApiClient:
     async def async_create_calendar_event(
         self, attributes: dict[str, Any], *, frame_id: str | None = None
     ) -> dict[str, Any]:
-        body = {"data": {"type": "calendar_event", "attributes": attributes}}
+        # This endpoint takes a FLAT body (verified from captured traffic):
+        # {summary, starts_at, ends_at, all_day, timezone, description,
+        #  location, rrule, category_ids}
         data = await self._request(
-            "POST", f"/frames/{self._frame(frame_id)}/calendar_events", json=body
+            "POST",
+            f"/frames/{self._frame(frame_id)}/calendar_events",
+            json=attributes,
         )
         return _data_obj(data)
 
     async def async_update_calendar_event(
         self, event_id: str, attributes: dict[str, Any], *, frame_id: str | None = None
     ) -> dict[str, Any]:
-        body = {"data": {"type": "calendar_event", "attributes": attributes}}
         data = await self._request(
             "PATCH",
             f"/frames/{self._frame(frame_id)}/calendar_events/{event_id}",
-            json=body,
+            json=attributes,
         )
         return _data_obj(data)
 
@@ -348,11 +351,11 @@ class SkylightApiClient:
     async def async_create_list_item(
         self, list_id: str, label: str, *, frame_id: str | None = None
     ) -> dict[str, Any]:
-        body = {"data": {"type": "list_item", "attributes": {"label": label}}}
+        # Flat body (verified): {"label": "..."}
         data = await self._request(
             "POST",
             f"/frames/{self._frame(frame_id)}/lists/{list_id}/list_items",
-            json=body,
+            json={"label": label},
         )
         return _data_obj(data)
 
@@ -364,11 +367,10 @@ class SkylightApiClient:
         *,
         frame_id: str | None = None,
     ) -> dict[str, Any]:
-        body = {"data": {"type": "list_item", "attributes": attributes}}
         data = await self._request(
             "PATCH",
             f"/frames/{self._frame(frame_id)}/lists/{list_id}/list_items/{item_id}",
-            json=body,
+            json=attributes,
         )
         return _data_obj(data)
 

@@ -3,9 +3,8 @@
 A custom Home Assistant integration that bridges your **Skylight family
 calendar** (`ourskylight.com`) into Home Assistant.
 
-It is **read-only** today (exposes your household's data as HA entities), but
-the underlying API client is full read/write, so adding write features later
-(create events, complete chores, edit lists) is a small step.
+It exposes your household's data as HA entities and supports **two-way edits**
+for calendars and lists (create/update/delete events and to-do items from HA).
 
 > ⚠️ **Unofficial.** Skylight has no public API for the family-calendar
 > product. This talks to the private app API, reverse-engineered and documented
@@ -17,14 +16,15 @@ the underlying API client is full read/write, so adding write features later
 One **device per Skylight frame**, with:
 
 - 📅 **Calendar** entity — all events, queryable by Lovelace calendar cards and
-  automations (`calendar.skylight_calendar`).
+  automations (`calendar.skylight_calendar`). **Read/write**: create, edit and
+  delete events from Home Assistant.
 - 🔢 **Sensors**
   - `Events today` (+ list of titles)
   - `Chores due today` (+ list)
   - One **points** sensor per profile (if rewards are enabled)
   - One **list** sensor per Skylight list (pending item count + items)
-- ✅ **To-do lists** — each Skylight list (shopping / to-do) as a read-only HA
-  to-do list.
+- ✅ **To-do lists** — each Skylight list (shopping / to-do) as a **read/write**
+  HA to-do list (add, complete and remove items).
 
 Covers the full Skylight surface: profiles, calendar, chores, lists, meals,
 rewards.
@@ -62,14 +62,23 @@ more frames.
 - ⚠️ A Skylight password grants **full account access** (no scoped keys). Treat
   it accordingly. Details in [`docs/API.md`](docs/API.md#security-note).
 
-## Making it read/write (later)
+## Writes
 
-`api.py` already implements `async_create_calendar_event`,
-`async_complete_chore`, `async_create_list_item`, etc. To expose them:
+Enabled for calendars and lists:
 
-- Add `CalendarEntityFeature.CREATE_EVENT…` to the calendar entity and
-  implement `async_create_event` / `async_delete_event`.
-- Add `TodoListEntityFeature.CREATE_TODO_ITEM…` to the to-do entity.
+- **Calendar** — `CalendarEntityFeature.CREATE_EVENT | UPDATE_EVENT |
+  DELETE_EVENT`. The create/update body is sent **flat** (`summary`,
+  `starts_at`, `ends_at`, `all_day`, `timezone`, `description`, `location`,
+  `rrule`), matching captured app traffic.
+- **To-do** — `CREATE_TODO_ITEM | UPDATE_TODO_ITEM | DELETE_TODO_ITEM`.
+
+Still client-only (helpers exist in `api.py`, not yet surfaced as HA actions):
+`async_complete_chore`, reward redeem/unredeem, category create/merge. A
+`skylight.complete_chore` service is the natural next step.
+
+> ⚠️ Writes are built from observed request shapes but were **not** end-to-end
+> tested against a live account (to avoid creating junk on your real calendar).
+> Verify create/delete on a throwaway event first.
 
 ## Layout
 

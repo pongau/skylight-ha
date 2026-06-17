@@ -14,6 +14,7 @@ from homeassistant.components.todo import (
     TodoItem,
     TodoItemStatus,
     TodoListEntity,
+    TodoListEntityFeature,
 )
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -51,7 +52,13 @@ def _attrs(item: dict[str, Any]) -> dict[str, Any]:
 
 
 class SkylightTodoList(SkylightEntity, TodoListEntity):
-    """A Skylight list as a read-only HA to-do list."""
+    """A Skylight list surfaced as an HA to-do list (read/write)."""
+
+    _attr_supported_features = (
+        TodoListEntityFeature.CREATE_TODO_ITEM
+        | TodoListEntityFeature.UPDATE_TODO_ITEM
+        | TodoListEntityFeature.DELETE_TODO_ITEM
+    )
 
     def __init__(self, coordinator: SkylightCoordinator, list_id: str) -> None:
         super().__init__(coordinator)
@@ -87,3 +94,30 @@ class SkylightTodoList(SkylightEntity, TodoListEntity):
                 )
             )
         return result
+
+    # -- writes ---------------------------------------------------------------
+    async def async_create_todo_item(self, item: TodoItem) -> None:
+        await self.coordinator.client.async_create_list_item(
+            self._list_id, item.summary or ""
+        )
+        await self.coordinator.async_request_refresh()
+
+    async def async_update_todo_item(self, item: TodoItem) -> None:
+        attributes: dict[str, Any] = {}
+        if item.summary is not None:
+            attributes["label"] = item.summary
+        if item.status is not None:
+            attributes["status"] = (
+                "completed"
+                if item.status == TodoItemStatus.COMPLETED
+                else "pending"
+            )
+        await self.coordinator.client.async_update_list_item(
+            self._list_id, item.uid, attributes
+        )
+        await self.coordinator.async_request_refresh()
+
+    async def async_delete_todo_items(self, uids: list[str]) -> None:
+        for uid in uids:
+            await self.coordinator.client.async_delete_list_item(self._list_id, uid)
+        await self.coordinator.async_request_refresh()
