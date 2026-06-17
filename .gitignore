@@ -1,0 +1,9 @@
+__pycache__/
+*.py[cod]
+.DS_Store
+.venv/
+venv/
+*.log
+# never commit captured Skylight tokens or credentials
+*.secrets
+secrets.json

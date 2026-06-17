@@ -1,0 +1,43 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Skylight",
+        "description": "How do you want to connect to your Skylight account?",
+        "data": {
+          "auth_method": "Authentication method"
+        }
+      },
+      "password": {
+        "title": "Skylight login",
+        "description": "Enter your Skylight account email and password. They are stored only in Home Assistant and used to obtain short-lived access tokens.",
+        "data": {
+          "email": "Email",
+          "password": "Password"
+        }
+      },
+      "token": {
+        "title": "Skylight access token",
+        "description": "Paste a Bearer access token captured from the Skylight app (Authorization header). Note: tokens expire after ~2 hours and cannot be auto-refreshed without your email/password.",
+        "data": {
+          "access_token": "Access token"
+        }
+      },
+      "frame": {
+        "title": "Choose a frame",
+        "description": "Select which Skylight frame (calendar) to add.",
+        "data": {
+          "frame_id": "Frame"
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "Invalid credentials or token.",
+      "cannot_connect": "Could not reach Skylight. Check your connection and try again."
+    },
+    "abort": {
+      "already_configured": "This frame is already configured.",
+      "no_frames": "No frames were found on this account."
+    }
+  }
+}

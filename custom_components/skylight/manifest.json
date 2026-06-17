@@ -1,0 +1,13 @@
+{
+  "domain": "skylight",
+  "name": "Skylight Calendar",
+  "version": "0.1.0",
+  "documentation": "https://github.com/yourname/skylight-ha",
+  "issue_tracker": "https://github.com/yourname/skylight-ha/issues",
+  "codeowners": [],
+  "config_flow": true,
+  "integration_type": "hub",
+  "iot_class": "cloud_polling",
+  "requirements": [],
+  "dependencies": []
+}
