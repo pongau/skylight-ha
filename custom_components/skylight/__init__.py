@@ -5,18 +5,16 @@ from __future__ import annotations
 import logging
 
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .api import SkylightApiClient, SkylightAuthError, SkylightError
 from .const import (
-    CONF_DEVICE_ID,
-    CONF_EMAIL,
     CONF_FRAME_ID,
-    CONF_PASSWORD,
+    CONF_REFRESH_TOKEN,
     CONF_TOKEN,
-    DOMAIN,
+    CONF_TOKEN_EXPIRY,
     PLATFORMS,
 )
 from .coordinator import SkylightCoordinator
@@ -29,13 +27,27 @@ type SkylightConfigEntry = ConfigEntry[SkylightCoordinator]
 async def async_setup_entry(hass: HomeAssistant, entry: SkylightConfigEntry) -> bool:
     """Set up Skylight from a config entry."""
     session = async_get_clientsession(hass)
+
+    @callback
+    def _persist_tokens(refresh_token: str, access_token: str, expiry: float) -> None:
+        """Persist rotated tokens so they survive restarts."""
+        hass.config_entries.async_update_entry(
+            entry,
+            data={
+                **entry.data,
+                CONF_REFRESH_TOKEN: refresh_token,
+                CONF_TOKEN: access_token,
+                CONF_TOKEN_EXPIRY: expiry,
+            },
+        )
+
     client = SkylightApiClient(
         session,
-        device_id=entry.data[CONF_DEVICE_ID],
-        email=entry.data.get(CONF_EMAIL),
-        password=entry.data.get(CONF_PASSWORD),
+        refresh_token=entry.data.get(CONF_REFRESH_TOKEN),
         access_token=entry.data.get(CONF_TOKEN),
+        token_expiry=entry.data.get(CONF_TOKEN_EXPIRY),
         frame_id=entry.data[CONF_FRAME_ID],
+        on_token_update=_persist_tokens,
     )
 
     try:

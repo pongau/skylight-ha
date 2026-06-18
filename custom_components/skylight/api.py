@@ -1,27 +1,38 @@
 """Async client for the (unofficial) Skylight family-calendar REST API.
 
-Auth model (reverse-engineered):
-  * POST /api/sessions  with JSON {email, password, unique_id}
-    -> {access_token, refresh_token, user_id, ...}  (opaque 43-char tokens)
-  * Every request sends:
-        Authorization: Bearer <access_token>
-        Skylight-Api-Version: 2026-05-01
-        User-Agent: SkylightMobile (web)
-        Accept: application/json
-  * Access tokens expire after ~2h. We simply re-authenticate with the stored
-    credentials when a token is missing/expired or a 401 is returned. (A
-    refresh_token grant exists too, but re-login is simplest and robust.)
+Auth model (reverse-engineered, June 2026):
+  The old email/password ``POST /api/sessions`` flow is **sunset** — every
+  ``Skylight-Api-Version`` is rejected as "no longer supported". The apps now
+  use a standard OAuth2 setup:
 
-The same credentials/token grant FULL account read+write access; there is no
-scoped API key. Treat them as secrets.
+    POST https://app.ourskylight.com/oauth/token
+      { grant_type: "refresh_token", refresh_token: <rt>,
+        client_id: "skylight-mobile" }
+    -> { access_token, refresh_token (ROTATED), token_type: "Bearer",
+         expires_in: 7200, scope: "everything" }
 
-Responses are JSON:API shaped: {"data": [{"type","id","attributes",
-"relationships"}], "included": [...]}.
+  So this client is seeded with a **refresh token** (captured once from the
+  app) and exchanges it for short-lived (2h) Bearer access tokens. Refresh
+  tokens rotate on every use, so the new one must be persisted — the caller
+  passes ``on_token_update`` to save it back to the config entry.
+
+  API data calls use:
+    Authorization: Bearer <access_token>
+    Skylight-Api-Version: 2026-05-01   (accepted for data endpoints)
+    User-Agent: SkylightMobile (web)
+    Accept: application/json
+
+  The token grants full account read+write (scope "everything"). Treat the
+  refresh token as a secret.
+
+Responses are JSON:API shaped: {"data": [...], "included": [...]}.
 """
 
 from __future__ import annotations
 
 import logging
+import time
+from collections.abc import Callable
 from datetime import date, datetime, timezone
 from typing import Any
 
@@ -31,10 +42,15 @@ from .const import (
     API_VERSION,
     API_VERSION_HEADER,
     BASE_URL,
+    OAUTH_CLIENT_ID,
+    OAUTH_TOKEN_URL,
     USER_AGENT,
 )
 
 _LOGGER = logging.getLogger(__name__)
+
+# Refresh this many seconds before the access token actually expires.
+_EXPIRY_SKEW = 300
 
 
 class SkylightError(Exception):
@@ -42,34 +58,35 @@ class SkylightError(Exception):
 
 
 class SkylightAuthError(SkylightError):
-    """Raised when authentication fails (bad credentials / token)."""
+    """Raised when authentication fails (bad/expired refresh token)."""
 
 
 class SkylightApiClient:
-    """Thin async wrapper over the Skylight private API."""
+    """Thin async wrapper over the Skylight private API (OAuth refresh-token)."""
 
     def __init__(
         self,
         session: aiohttp.ClientSession,
         *,
-        device_id: str,
-        email: str | None = None,
-        password: str | None = None,
+        refresh_token: str | None = None,
         access_token: str | None = None,
+        token_expiry: float | None = None,
         frame_id: str | None = None,
+        on_token_update: Callable[[str, str, float], None] | None = None,
     ) -> None:
         self._session = session
-        self._device_id = device_id
-        self._email = email
-        self._password = password
+        self._refresh_token = refresh_token
         self._token = access_token
-        # When a token is supplied directly (no credentials) we cannot re-login.
-        self._static_token = access_token is not None and not (email and password)
-        # The current web app uses `Authorization: Bearer <token>`; some older
-        # captures use `Authorization: Basic <token>`. We default to Bearer and
-        # auto-detect on validate().
-        self._auth_scheme = "Bearer"
+        self._expiry = token_expiry or 0.0
+        # If we only have a static access token (no refresh token) we cannot
+        # renew it — it just dies after ~2h.
+        self._can_refresh = refresh_token is not None
+        self._on_token_update = on_token_update
         self.frame_id = frame_id
+
+    @property
+    def refresh_token(self) -> str | None:
+        return self._refresh_token
 
     # -- auth -----------------------------------------------------------------
     @property
@@ -81,44 +98,56 @@ class SkylightApiClient:
             "User-Agent": USER_AGENT,
         }
 
-    async def async_login(self) -> str:
-        """Authenticate with email/password and store the access token."""
-        if not (self._email and self._password):
-            raise SkylightAuthError("No credentials configured to log in with")
+    async def async_refresh(self) -> None:
+        """Exchange the refresh token for a fresh access token (rotating)."""
+        if not self._refresh_token:
+            raise SkylightAuthError("No refresh token configured")
 
         body = {
-            "email": self._email,
-            "password": self._password,
-            "unique_id": self._device_id,
+            "grant_type": "refresh_token",
+            "refresh_token": self._refresh_token,
+            "client_id": OAUTH_CLIENT_ID,
         }
         async with self._session.post(
-            f"{BASE_URL}/sessions", headers=self._base_headers, json=body
+            OAUTH_TOKEN_URL,
+            headers={"Accept": "application/json", "Content-Type": "application/json"},
+            json=body,
         ) as resp:
             payload = await _safe_json(resp)
-            if resp.status in (401, 403) or "errors" in (payload or {}):
-                raise SkylightAuthError(_errors_text(payload) or f"HTTP {resp.status}")
-            resp.raise_for_status()
+            if resp.status in (400, 401):
+                raise SkylightAuthError(
+                    _oauth_error(payload) or "Refresh token rejected"
+                )
+            if resp.status >= 400 or not isinstance(payload, dict):
+                raise SkylightError(f"Token endpoint returned HTTP {resp.status}")
 
-        token = _extract_token(payload)
+        token = payload.get("access_token")
         if not token:
-            raise SkylightAuthError("Login response did not contain an access token")
+            raise SkylightAuthError("Token response did not contain an access token")
         self._token = token
-        return token
+        expires_in = payload.get("expires_in") or 7200
+        self._expiry = time.time() + float(expires_in)
+        # Persist the rotated refresh token.
+        new_rt = payload.get("refresh_token")
+        if new_rt:
+            self._refresh_token = new_rt
+        if self._on_token_update and self._refresh_token:
+            self._on_token_update(self._refresh_token, self._token, self._expiry)
 
     async def async_validate(self) -> None:
-        """Ensure we have a usable token and the correct auth scheme."""
-        if self._token is None:
-            await self.async_login()
+        """Ensure we have a working token; refresh if we can."""
+        if self._can_refresh:
+            await self.async_refresh()
+        # Confirm the token actually works.
+        await self.async_get_frames()
 
-        # Probe the token; if Bearer is rejected, fall back to Basic.
-        for scheme in ("Bearer", "Basic"):
-            self._auth_scheme = scheme
-            try:
-                await self.async_get_frames()
-                return
-            except SkylightAuthError:
-                continue
-        raise SkylightAuthError("Token was not accepted as Bearer or Basic")
+    async def _ensure_token(self) -> None:
+        if self._token and time.time() < self._expiry - _EXPIRY_SKEW:
+            return
+        if self._can_refresh:
+            await self.async_refresh()
+        elif not self._token:
+            raise SkylightAuthError("No access token available")
 
     # -- core request ---------------------------------------------------------
     async def _request(
@@ -130,21 +159,18 @@ class SkylightApiClient:
         json: dict[str, Any] | None = None,
         _retry: bool = True,
     ) -> Any:
-        if self._token is None and not self._static_token:
-            await self.async_login()
+        await self._ensure_token()
 
         headers = dict(self._base_headers)
-        if self._token:
-            headers["Authorization"] = f"{self._auth_scheme} {self._token}"
+        headers["Authorization"] = f"Bearer {self._token}"
 
         url = path if path.startswith("http") else f"{BASE_URL}{path}"
         async with self._session.request(
             method, url, headers=headers, params=_clean_params(params), json=json
         ) as resp:
-            if resp.status == 401 and _retry and not self._static_token:
-                # token expired -> re-login and retry once
-                _LOGGER.debug("401 from Skylight; re-authenticating")
-                await self.async_login()
+            if resp.status == 401 and _retry and self._can_refresh:
+                _LOGGER.debug("401 from Skylight; refreshing access token")
+                await self.async_refresh()
                 return await self._request(
                     method, path, params=params, json=json, _retry=False
                 )
@@ -300,13 +326,12 @@ class SkylightApiClient:
         data = await self._request("GET", f"/frames/{self._frame(frame_id)}/devices")
         return _data_list(data)
 
-    # -- writes (not used by the read-only entities; here for optionality) -----
+    # -- writes ---------------------------------------------------------------
     async def async_create_calendar_event(
         self, attributes: dict[str, Any], *, frame_id: str | None = None
     ) -> dict[str, Any]:
-        # This endpoint takes a FLAT body (verified from captured traffic):
-        # {summary, starts_at, ends_at, all_day, timezone, description,
-        #  location, rrule, category_ids}
+        # Flat body (verified from captured traffic): {summary, starts_at,
+        # ends_at, all_day, timezone, description, location, rrule, category_ids}
         data = await self._request(
             "POST",
             f"/frames/{self._frame(frame_id)}/calendar_events",
@@ -431,23 +456,9 @@ def _errors_text(payload: Any) -> str | None:
     return None
 
 
-def _extract_token(payload: Any) -> str | None:
-    """Find the access token in a login response, tolerating shape variations."""
-    if not isinstance(payload, dict):
-        return None
-    token_keys = ("access_token", "accessToken", "token", "authToken")
-    for key in token_keys:
-        if isinstance(payload.get(key), str):
-            return payload[key]
-    # JSON:API / nested wrappers: {"data": {...}} or {"user": {...}}
-    for wrapper in ("data", "user"):
-        node = payload.get(wrapper)
-        if isinstance(node, dict):
-            attrs = node.get("attributes", node)
-            if isinstance(attrs, dict):
-                for key in token_keys:
-                    if isinstance(attrs.get(key), str):
-                        return attrs[key]
+def _oauth_error(payload: Any) -> str | None:
+    if isinstance(payload, dict):
+        return payload.get("error_description") or payload.get("error")
     return None
 
 

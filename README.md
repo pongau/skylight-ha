@@ -44,23 +44,33 @@ folder and restart.
 
 **Settings → Devices & Services → Add Integration → Skylight.**
 
+> ℹ️ Skylight's old email/password API is **sunset**, so login is token-based
+> now (OAuth2 refresh tokens). See [`docs/API.md`](docs/API.md#authentication).
+
 Choose one of:
 
-- **Email & password** (recommended) — stored in HA and used to fetch
-  short-lived (2h) access tokens, auto-refreshed by re-login.
-- **Paste an access token** — capture a `Bearer` token from the app (see
-  [`docs/API.md`](docs/API.md)). No credentials stored, but the token expires
-  in ~2h and won't auto-refresh.
+- **Refresh token** (recommended, durable) — the integration exchanges it for
+  2-hour access tokens and **auto-renews indefinitely**, persisting the rotated
+  token each time.
+- **Access token** (temporary) — works for ~2 hours, no auto-renew. Handy for a
+  quick test.
 
-Then pick which **frame** (calendar) to add. Add the integration again to add
-more frames.
+**To capture a token:** sign in at `ourskylight.com`, open DevTools → Application
+→ Local Storage → `ourskylight.com` → key `mmkv.default\auth-storage`, and copy
+`state.refreshToken` (or `state.accessToken`).
+
+Then pick which **frame** (calendar) to add. Add the integration again for more
+frames.
 
 ## Security
 
-- Credentials/tokens live in HA's encrypted config-entry store — never in code
-  or logs.
-- ⚠️ A Skylight password grants **full account access** (no scoped keys). Treat
-  it accordingly. Details in [`docs/API.md`](docs/API.md#security-note).
+- Tokens live in HA's encrypted config-entry store — never in code or logs.
+  Rotated refresh tokens are persisted back to the entry automatically.
+- ⚠️ A Skylight refresh token grants **full account access** (`scope:
+  everything`, no finer scoping). Treat it like a password. Details in
+  [`docs/API.md`](docs/API.md#security-note).
+- Note: the refresh chain rotates, so using a token in HA will eventually log
+  out other sessions that shared it (just sign in again where needed).
 
 ## Writes
 

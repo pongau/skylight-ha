@@ -26,53 +26,58 @@ Every request must advertise a recent client version or the API responds with
 | `Content-Type` | `application/json` (for POST/PATCH) |
 | `Skylight-Api-Version` | `2026-05-01` |
 | `User-Agent` | `SkylightMobile (web)` |
-| `Authorization` | `Bearer <token>` (current web app) — some clients use `Basic <token>` |
-
-> **Auth scheme note:** the current Expo web client sends
-> `Authorization: Bearer <accessToken>` (verified working for read *and*
-> write). Older captures use `Authorization: Basic <token>` with the single
-> `token` returned by `/api/sessions`. This integration tries Bearer first and
-> falls back to Basic automatically.
+| `Authorization` | `Bearer <access_token>` |
 
 ## Authentication
 
-Skylight uses an **opaque bearer-token** scheme (not API keys, not scoped
-OAuth). The same credentials grant **full account read + write** access.
+Skylight uses **OAuth2** (Doorkeeper) with opaque, **rotating** tokens.
 
-### Login
+> ⚠️ **The old email/password `POST /api/sessions` flow is sunset.** As of
+> June 2026 every `Skylight-Api-Version` value is rejected there with
+> `401 {"errors":["This version of Skylight is no longer supported..."]}`
+> (recognised versions like `2026-06-01` are "deprecated"; everything else is
+> "Invalid API version"). The apps now authenticate via OAuth. Don't build on
+> `/api/sessions`.
+
+### Token endpoint (refresh-token grant)
 
 ```
-POST /api/sessions
+POST https://app.ourskylight.com/oauth/token        ← note: NOT under /api
 Content-Type: application/json
-Skylight-Api-Version: 2026-05-01
-User-Agent: SkylightMobile (web)
 
-{ "email": "you@example.com", "password": "…", "unique_id": "<client-uuid>" }
+{ "grant_type": "refresh_token",
+  "refresh_token": "<refresh_token>",
+  "client_id": "skylight-mobile" }
 ```
 
-* `unique_id` is a client-generated device identifier (any stable UUID). It is
-  **not** a secret.
-* Response contains an `access_token` and `refresh_token` (opaque, ~43 chars)
-  plus the user id. The web client stores `accessTokenLifeSpan = 7200000` ms
-  → **access tokens last 2 hours.**
-* SSO variants also exist (fields `id_token` / `code`; redirect scheme
-  `skylight-family`), and `POST /api/oauth/legacy_token_exchange`
-  (`client_id: skylight-mobile`) exchanges a legacy token. Not needed for
-  email/password login.
+Response (`200`):
 
-### Refresh
+```json
+{ "access_token": "…", "token_type": "Bearer", "expires_in": 7200,
+  "refresh_token": "…(ROTATED)…", "scope": "everything", "created_at": 1781… }
+```
 
-Access tokens expire after ~2h. The simplest robust strategy (used by this
-integration) is to **re-`POST /api/sessions`** with the stored credentials when
-a `401` is returned. A `refresh_token` grant also exists.
+* **Public client** — `client_id: "skylight-mobile"`, **no client secret**.
+* `access_token` is a Bearer token, **valid 2 hours**.
+* The `refresh_token` **rotates on every call** — the old one is revoked, so you
+  must persist the new one for next time. (Two clients cannot share one refresh
+  chain.)
+* `scope: "everything"` → full account read + write.
+* Also present: `/oauth/authorize` (authorization-code flow, used by the apps'
+  interactive login) and `/oauth/revoke`.
+
+### Bootstrapping a refresh token
+
+There's no headless password login anymore, so capture a refresh token once:
+sign in at `ourskylight.com`, then in DevTools → Application → Local Storage →
+`mmkv.default\auth-storage` → copy `state.refreshToken`. Feed it to the client;
+it self-renews from there.
 
 ### Security note
 
-Because a single password → a full-access token with no scoping and no
-user-revocable API keys, **the password is equivalent to total account
-control** (read everything, delete data, manage devices). This is common for
-consumer apps without a public API, but it is on the less-granular end of the
-spectrum. Tokens are at least short-lived (2h) and server-side revocable.
+A refresh token → a full-access (`everything`) token with no finer scoping.
+Treat it like a password. Access tokens are short-lived (2h) and the refresh
+chain is server-side revocable (and rotates), which limits exposure.
 
 ## Data shape
 

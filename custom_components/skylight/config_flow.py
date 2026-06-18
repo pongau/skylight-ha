@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import uuid
 from typing import Any
 
 import voluptuous as vol
@@ -11,14 +10,12 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .api import SkylightApiClient, SkylightAuthError, SkylightError
 from .const import (
-    AUTH_METHOD_PASSWORD,
+    AUTH_METHOD_REFRESH,
     AUTH_METHOD_TOKEN,
     CONF_AUTH_METHOD,
-    CONF_DEVICE_ID,
-    CONF_EMAIL,
     CONF_FRAME_ID,
     CONF_FRAME_NAME,
-    CONF_PASSWORD,
+    CONF_REFRESH_TOKEN,
     CONF_TOKEN,
     DOMAIN,
 )
@@ -37,7 +34,6 @@ class SkylightConfigFlow(ConfigFlow, domain=DOMAIN):
 
     def __init__(self) -> None:
         self._client: SkylightApiClient | None = None
-        self._device_id = uuid.uuid4().hex
         self._base: dict[str, Any] = {}
         self._frames: list[dict[str, Any]] = []
 
@@ -48,38 +44,35 @@ class SkylightConfigFlow(ConfigFlow, domain=DOMAIN):
         if user_input is not None:
             if user_input[CONF_AUTH_METHOD] == AUTH_METHOD_TOKEN:
                 return await self.async_step_token()
-            return await self.async_step_password()
+            return await self.async_step_refresh()
 
         return self.async_show_form(
             step_id="user",
             data_schema=vol.Schema(
                 {
                     vol.Required(
-                        CONF_AUTH_METHOD, default=AUTH_METHOD_PASSWORD
+                        CONF_AUTH_METHOD, default=AUTH_METHOD_REFRESH
                     ): vol.In(
                         {
-                            AUTH_METHOD_PASSWORD: "Email & password (recommended)",
-                            AUTH_METHOD_TOKEN: "Paste an access token",
+                            AUTH_METHOD_REFRESH: "Refresh token (recommended, durable)",
+                            AUTH_METHOD_TOKEN: "Access token (temporary, ~2h)",
                         }
                     )
                 }
             ),
         )
 
-    async def async_step_password(
+    async def async_step_refresh(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         errors: dict[str, str] = {}
         if user_input is not None:
             session = async_get_clientsession(self.hass)
             client = SkylightApiClient(
-                session,
-                device_id=self._device_id,
-                email=user_input[CONF_EMAIL],
-                password=user_input[CONF_PASSWORD],
+                session, refresh_token=user_input[CONF_REFRESH_TOKEN]
             )
             try:
-                await client.async_login()
+                await client.async_validate()
                 self._frames = await client.async_get_frames()
             except SkylightAuthError:
                 errors["base"] = "invalid_auth"
@@ -87,21 +80,13 @@ class SkylightConfigFlow(ConfigFlow, domain=DOMAIN):
                 errors["base"] = "cannot_connect"
             else:
                 self._client = client
-                self._base = {
-                    CONF_EMAIL: user_input[CONF_EMAIL],
-                    CONF_PASSWORD: user_input[CONF_PASSWORD],
-                    CONF_DEVICE_ID: self._device_id,
-                }
+                # store the ROTATED refresh token, not the one the user pasted
+                self._base = {CONF_REFRESH_TOKEN: client.refresh_token}
                 return await self.async_step_frame()
 
         return self.async_show_form(
-            step_id="password",
-            data_schema=vol.Schema(
-                {
-                    vol.Required(CONF_EMAIL): str,
-                    vol.Required(CONF_PASSWORD): str,
-                }
-            ),
+            step_id="refresh",
+            data_schema=vol.Schema({vol.Required(CONF_REFRESH_TOKEN): str}),
             errors=errors,
         )
 
@@ -112,9 +97,7 @@ class SkylightConfigFlow(ConfigFlow, domain=DOMAIN):
         if user_input is not None:
             session = async_get_clientsession(self.hass)
             client = SkylightApiClient(
-                session,
-                device_id=self._device_id,
-                access_token=user_input[CONF_TOKEN],
+                session, access_token=user_input[CONF_TOKEN]
             )
             try:
                 self._frames = await client.async_get_frames()
@@ -124,10 +107,7 @@ class SkylightConfigFlow(ConfigFlow, domain=DOMAIN):
                 errors["base"] = "cannot_connect"
             else:
                 self._client = client
-                self._base = {
-                    CONF_TOKEN: user_input[CONF_TOKEN],
-                    CONF_DEVICE_ID: self._device_id,
-                }
+                self._base = {CONF_TOKEN: user_input[CONF_TOKEN]}
                 return await self.async_step_frame()
 
         return self.async_show_form(
@@ -143,7 +123,6 @@ class SkylightConfigFlow(ConfigFlow, domain=DOMAIN):
         if not self._frames:
             return self.async_abort(reason="no_frames")
 
-        # single frame -> skip the picker
         if user_input is None and len(self._frames) == 1:
             user_input = {CONF_FRAME_ID: str(self._frames[0].get("id"))}
 
