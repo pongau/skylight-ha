@@ -15,6 +15,8 @@ _spec = importlib.util.spec_from_file_location("chore_summary", _MODULE_PATH)
 cs = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(cs)
 
+from datetime import date  # noqa: E402
+
 
 def test_fmt_time_24h_to_12h():
     assert cs.fmt_time("20:00") == "8:00 PM"
@@ -31,6 +33,29 @@ def test_fmt_time_absent_returns_none():
 
 def test_fmt_time_unparseable_passes_through():
     assert cs.fmt_time("whenever") == "whenever"
+
+
+def test_category_id_from_relationship():
+    chore = {"relationships": {"category": {"data": {"id": "42", "type": "category"}}}}
+    assert cs.category_id(chore) == "42"
+
+
+def test_category_id_fallback_to_attribute():
+    chore = {"attributes": {"category_id": 7}}
+    assert cs.category_id(chore) == "7"
+
+
+def test_category_id_missing_returns_none():
+    assert cs.category_id({"relationships": {"category": {"data": None}}}) is None
+    assert cs.category_id({}) is None
+
+
+def test_is_on_date_matches_date_prefix():
+    assert cs.is_on_date("2026-06-19", date(2026, 6, 19)) is True
+    assert cs.is_on_date("2026-06-19T20:00:00", date(2026, 6, 19)) is True
+    assert cs.is_on_date("2026-06-18", date(2026, 6, 19)) is False
+    assert cs.is_on_date(None, date(2026, 6, 19)) is False
+    assert cs.is_on_date("garbage", date(2026, 6, 19)) is False
 
 
 if __name__ == "__main__":
