@@ -59,3 +59,67 @@ def is_on_date(value: str | None, day: date) -> bool:
         return date.fromisoformat(str(value)[:10]) == day
     except ValueError:
         return False
+
+
+def build_member_summary(
+    chores: list[dict[str, Any]],
+    profile_id: str,
+    label: str | None,
+    day: date,
+) -> dict[str, Any]:
+    """State + attributes for one member's chores on ``day``.
+
+    Returns ``{"state": int, "attributes": {...}}`` where state is the number of
+    incomplete chores remaining today.
+    """
+    mine = [
+        c
+        for c in chores
+        if category_id(c) == str(profile_id) and is_on_date(_attrs(c).get("start"), day)
+    ]
+    mine.sort(key=lambda c: _attrs(c).get("position") or 0)
+
+    items: list[dict[str, Any]] = []
+    completed = 0
+    points_earned = 0
+    points_possible = 0
+    any_points = False
+
+    for chore in mine:
+        attr = _attrs(chore)
+        done = bool(attr.get("completed_on"))
+        if done:
+            completed += 1
+
+        item: dict[str, Any] = {"name": attr.get("summary"), "done": done}
+
+        points = attr.get("reward_points")
+        if points is not None:
+            any_points = True
+            item["points"] = points
+            points_possible += points
+            if done:
+                points_earned += points
+
+        due = fmt_time(attr.get("start_time"))
+        if due is not None:
+            item["due"] = due
+
+        icon = attr.get("emoji_icon")
+        if icon:
+            item["icon"] = icon
+
+        items.append(item)
+
+    total = len(mine)
+    attributes: dict[str, Any] = {
+        "display_name": label,
+        "total": total,
+        "completed": completed,
+        "chores": items,
+    }
+    if any_points:
+        attributes["points_earned"] = points_earned
+        attributes["points_possible"] = points_possible
+
+    return {"state": total - completed, "attributes": attributes}

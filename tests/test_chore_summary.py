@@ -58,6 +58,104 @@ def test_is_on_date_matches_date_prefix():
     assert cs.is_on_date("garbage", date(2026, 6, 19)) is False
 
 
+def _chore(cat, start, summary, *, done=False, start_time=None, icon=None, points=None, position=0):
+    attrs = {
+        "summary": summary,
+        "start": start,
+        "completed_on": start if done else None,
+        "start_time": start_time,
+        "emoji_icon": icon,
+        "reward_points": points,
+        "position": position,
+    }
+    return {
+        "attributes": attrs,
+        "relationships": {"category": {"data": {"id": str(cat), "type": "category"}}},
+    }
+
+
+DAY = date(2026, 6, 19)
+
+
+def test_summary_filters_by_member_and_day():
+    chores = [
+        _chore("1", "2026-06-19", "Mine today"),
+        _chore("2", "2026-06-19", "Other member"),
+        _chore("1", "2026-06-18", "Mine yesterday"),
+    ]
+    out = cs.build_member_summary(chores, "1", "Alex", DAY)
+    names = [c["name"] for c in out["attributes"]["chores"]]
+    assert names == ["Mine today"]
+    assert out["attributes"]["total"] == 1
+    assert out["attributes"]["display_name"] == "Alex"
+
+
+def test_summary_state_is_incomplete_remaining():
+    chores = [
+        _chore("1", "2026-06-19", "A", done=True, position=1),
+        _chore("1", "2026-06-19", "B", done=False, position=2),
+        _chore("1", "2026-06-19", "C", done=False, position=3),
+    ]
+    out = cs.build_member_summary(chores, "1", "Alex", DAY)
+    assert out["state"] == 2
+    assert out["attributes"]["total"] == 3
+    assert out["attributes"]["completed"] == 1
+
+
+def test_summary_sorted_by_position():
+    chores = [
+        _chore("1", "2026-06-19", "third", position=30),
+        _chore("1", "2026-06-19", "first", position=10),
+        _chore("1", "2026-06-19", "second", position=20),
+    ]
+    out = cs.build_member_summary(chores, "1", "Alex", DAY)
+    assert [c["name"] for c in out["attributes"]["chores"]] == ["first", "second", "third"]
+
+
+def test_summary_optional_keys_omitted_when_null():
+    chores = [_chore("1", "2026-06-19", "Plain")]
+    item = cs.build_member_summary(chores, "1", "Alex", DAY)["attributes"]["chores"][0]
+    assert item == {"name": "Plain", "done": False}
+    assert "points" not in item and "due" not in item and "icon" not in item
+
+
+def test_summary_optional_keys_present_when_set():
+    chores = [_chore("1", "2026-06-19", "Rich", start_time="20:00", icon="X", points=5)]
+    item = cs.build_member_summary(chores, "1", "Alex", DAY)["attributes"]["chores"][0]
+    assert item["due"] == "8:00 PM"
+    assert item["icon"] == "X"
+    assert item["points"] == 5
+
+
+def test_summary_points_totals_only_when_present():
+    no_points = cs.build_member_summary([_chore("1", "2026-06-19", "A")], "1", "Alex", DAY)
+    assert "points_earned" not in no_points["attributes"]
+    assert "points_possible" not in no_points["attributes"]
+
+    with_points = cs.build_member_summary(
+        [
+            _chore("1", "2026-06-19", "A", done=True, points=5),
+            _chore("1", "2026-06-19", "B", done=False, points=3),
+        ],
+        "1",
+        "Alex",
+        DAY,
+    )
+    assert with_points["attributes"]["points_earned"] == 5
+    assert with_points["attributes"]["points_possible"] == 8
+
+
+def test_summary_member_with_no_chores():
+    out = cs.build_member_summary([], "1", "Alex", DAY)
+    assert out["state"] == 0
+    assert out["attributes"] == {
+        "display_name": "Alex",
+        "total": 0,
+        "completed": 0,
+        "chores": [],
+    }
+
+
 if __name__ == "__main__":
     import traceback
 
