@@ -38,13 +38,22 @@
 Create `tests/test_chore_summary.py`:
 
 ```python
-"""Pure-logic tests for chore_summary. Run: python3.13 tests/test_chore_summary.py"""
+"""Pure-logic tests for chore_summary. Run: python3.13 tests/test_chore_summary.py
+
+chore_summary is loaded directly from its file path via importlib so the
+package's sibling modules (calendar.py, sensor.py, ...) never land on sys.path
+and shadow stdlib modules like ``calendar``.
+"""
+import importlib.util
 import os
 import sys
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "custom_components", "skylight"))
-
-import chore_summary as cs  # noqa: E402
+_MODULE_PATH = os.path.join(
+    os.path.dirname(__file__), "..", "custom_components", "skylight", "chore_summary.py"
+)
+_spec = importlib.util.spec_from_file_location("chore_summary", _MODULE_PATH)
+cs = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(cs)
 
 
 def test_fmt_time_24h_to_12h():
@@ -180,7 +189,7 @@ def test_is_on_date_matches_date_prefix():
     assert cs.is_on_date("garbage", date(2026, 6, 19)) is False
 ```
 
-Add `from datetime import date` to the test file's imports (top, after `import chore_summary`):
+Add `from datetime import date` to the test file's imports (top, after the importlib bootstrap block):
 
 ```python
 from datetime import date  # noqa: E402
