@@ -431,7 +431,7 @@ def build_member_summary(
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `python3.13 tests/test_chore_summary.py`
-Expected: PASS — `15/15 passed`, exit 0.
+Expected: PASS — `14/14 passed`, exit 0.
 
 - [ ] **Step 5: Commit**
 
@@ -545,7 +545,7 @@ Expected: no output, exit 0 (all modules parse).
 - [ ] **Step 6: Re-run pure tests (guard against accidental breakage)**
 
 Run: `python3.13 tests/test_chore_summary.py`
-Expected: PASS — `15/15 passed`.
+Expected: PASS — `14/14 passed`.
 
 - [ ] **Step 7: Commit**
 
@@ -566,7 +566,7 @@ Run:
 ```bash
 python3.13 -m py_compile custom_components/skylight/*.py && python3.13 tests/test_chore_summary.py
 ```
-Expected: compile clean, `15/15 passed`, exit 0.
+Expected: compile clean, `14/14 passed`, exit 0.
 
 - [ ] **Step 2: Deploy to Home Assistant**
 

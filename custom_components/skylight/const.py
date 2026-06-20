@@ -43,4 +43,9 @@ DEFAULT_SCAN_INTERVAL = timedelta(minutes=5)
 CALENDAR_LOOKAHEAD_DAYS = 30
 CALENDAR_LOOKBACK_DAYS = 1
 
+# --- Sensors -----------------------------------------------------------------
+# Linked profiles that are NOT real people and should not get per-member
+# chore sensors (shared/household categories). Matched against the profile label.
+EXCLUDED_PROFILE_LABELS = {"Family"}
+
 PLATFORMS = ["calendar", "sensor", "todo"]
