@@ -15,6 +15,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.util import dt as dt_util
 
 from . import SkylightConfigEntry
+from .calendar_util import clean_rrule
 from .coordinator import SkylightCoordinator
 from .entity import SkylightEntity
 
@@ -171,7 +172,7 @@ def _to_event(item: dict[str, Any]) -> CalendarEvent | None:
         # the right record via /calendar_events/{id}.
         uid=str(item.get("id")),
         recurrence_id=a.get("master_event_id"),
-        rrule=a.get("rrule"),
+        rrule=clean_rrule(a.get("rrule")),
     )
 
 
