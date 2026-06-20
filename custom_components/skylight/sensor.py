@@ -11,6 +11,8 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.util import dt as dt_util
 
 from . import SkylightConfigEntry
+from .chore_summary import build_member_summary
+from .const import EXCLUDED_PROFILE_LABELS
 from .coordinator import SkylightCoordinator
 from .entity import SkylightEntity
 
@@ -28,6 +30,7 @@ async def async_setup_entry(
 
     known_lists: set[str] = set()
     known_profiles: set[str] = set()
+    known_members: set[str] = set()
 
     @callback
     def _discover() -> None:
@@ -43,6 +46,13 @@ async def async_setup_entry(
                 if pid not in known_profiles:
                     known_profiles.add(pid)
                     new.append(SkylightProfilePointsSensor(coordinator, pid))
+        for prof in coordinator.data.get("profiles", []):
+            if _attrs(prof).get("label") in EXCLUDED_PROFILE_LABELS:
+                continue
+            pid = str(prof.get("id"))
+            if pid not in known_members:
+                known_members.add(pid)
+                new.append(SkylightMemberChoresSensor(coordinator, pid))
         if new:
             async_add_entities(new)
 
@@ -216,3 +226,46 @@ class SkylightProfilePointsSensor(SkylightEntity, SensorEntity):
                     if a.get(key) is not None:
                         return a[key]
         return None
+
+
+class SkylightMemberChoresSensor(SkylightEntity, SensorEntity):
+    """One family member's chores for today.
+
+    State is the number of incomplete chores remaining today; the full
+    breakdown is in attributes. See chore_summary.build_member_summary.
+    """
+
+    _attr_icon = "mdi:broom"
+    _attr_native_unit_of_measurement = "chores"
+
+    def __init__(self, coordinator: SkylightCoordinator, profile_id: str) -> None:
+        super().__init__(coordinator)
+        self._profile_id = profile_id
+        self._attr_unique_id = f"{self._frame_id}_chores_{profile_id}"
+
+    def _profile(self) -> dict[str, Any]:
+        for prof in self.coordinator.data.get("profiles", []):
+            if str(prof.get("id")) == self._profile_id:
+                return prof
+        return {}
+
+    @property
+    def name(self) -> str:
+        label = _attrs(self._profile()).get("label") or f"Profile {self._profile_id}"
+        return f"{label} chores"
+
+    def _summary(self) -> dict[str, Any]:
+        return build_member_summary(
+            self.coordinator.data.get("chores", []),
+            self._profile_id,
+            _attrs(self._profile()).get("label"),
+            dt_util.now().date(),
+        )
+
+    @property
+    def native_value(self) -> int:
+        return self._summary()["state"]
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        return self._summary()["attributes"]
